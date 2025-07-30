@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
+import { JourneyModule } from './modules/journey.module';
 import configurations from './config';
 
 @Module({
@@ -19,6 +20,7 @@ import configurations from './config';
         configService.get('database')!,
     }),
     DatabaseModule,
+    JourneyModule,
   ],
   controllers: [AppController],
   providers: [AppService],
