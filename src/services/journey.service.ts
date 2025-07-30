@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../database/database.service';
 import { Journey } from '../entities/journey.entity';
 import { JourneyRun } from '../entities/journey-run.entity';
+import { JourneyRunStatus } from '../enums/journey-run-status.enum';
 import {
   Journey as IJourney,
   PatientContext,
@@ -48,7 +49,7 @@ export class JourneyService {
     const journeyRun = new JourneyRun();
     journeyRun.runId = uuidv4();
     journeyRun.journeyId = journeyId;
-    journeyRun.status = 'in_progress';
+    journeyRun.status = JourneyRunStatus.IN_PROGRESS;
     journeyRun.currentNodeId = journey.start_node_id;
     journeyRun.patientContext = patientContext;
 
@@ -85,7 +86,7 @@ export class JourneyService {
     });
 
     if (!journey) {
-      await this.updateJourneyRunStatus(runId, 'failed', null);
+      await this.updateJourneyRunStatus(runId, JourneyRunStatus.FAILED, null);
       return;
     }
 
@@ -100,7 +101,11 @@ export class JourneyService {
         this.logger.error(
           `Node ${currentNodeId} not found in journey ${journey.id}`,
         );
-        await this.updateJourneyRunStatus(runId, 'failed', currentNodeId);
+        await this.updateJourneyRunStatus(
+          runId,
+          JourneyRunStatus.FAILED,
+          currentNodeId,
+        );
         return;
       }
 
@@ -110,12 +115,16 @@ export class JourneyService {
       );
 
       // Update the current node
-      await this.updateJourneyRunStatus(runId, 'in_progress', nextNodeId);
+      await this.updateJourneyRunStatus(
+        runId,
+        JourneyRunStatus.IN_PROGRESS,
+        nextNodeId,
+      );
       currentNodeId = nextNodeId;
     }
 
     // Journey completed
-    await this.updateJourneyRunStatus(runId, 'completed', null);
+    await this.updateJourneyRunStatus(runId, JourneyRunStatus.COMPLETED, null);
     this.logger.log(`Journey run ${runId} completed`);
   }
 
@@ -140,10 +149,6 @@ export class JourneyService {
     node: ActionNode,
     patientContext: PatientContext,
   ): string | null {
-    // Stub implementation - just log the message
-    console.log(
-      `Sending message to patient ${patientContext.id}: ${node.message}`,
-    );
     this.logger.log(
       `MESSAGE node ${node.id}: Sent message to patient ${patientContext.id}`,
     );
@@ -225,7 +230,7 @@ export class JourneyService {
 
   private async updateJourneyRunStatus(
     runId: string,
-    status: 'in_progress' | 'completed' | 'failed',
+    status: JourneyRunStatus,
     currentNodeId: string | null,
   ): Promise<void> {
     await this.databaseService.save(JourneyRun, {

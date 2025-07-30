@@ -1,3 +1,5 @@
+import { JourneyRunStatus } from '../enums/journey-run-status.enum';
+
 // An action to be performed, like sending an SMS or making a call
 export interface ActionNode {
   id: string;
@@ -52,7 +54,7 @@ export interface PatientContext {
 export interface JourneyRun {
   runId: string;
   journeyId: string;
-  status: 'in_progress' | 'completed' | 'failed';
+  status: JourneyRunStatus;
   currentNodeId: string | null;
   patientContext: PatientContext;
   createdAt: Date;

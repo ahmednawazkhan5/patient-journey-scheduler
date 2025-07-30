@@ -9,6 +9,7 @@ import {
   JourneyRun as IJourneyRun,
   PatientContext,
 } from '../interfaces/journey.interface';
+import { JourneyRunStatus } from '../enums/journey-run-status.enum';
 
 @Entity('journey_runs')
 export class JourneyRun implements IJourneyRun {
@@ -19,7 +20,7 @@ export class JourneyRun implements IJourneyRun {
   journeyId: string;
 
   @Column('varchar')
-  status: 'in_progress' | 'completed' | 'failed';
+  status: JourneyRunStatus;
 
   @Column({ type: 'varchar', nullable: true })
   currentNodeId: string | null;
