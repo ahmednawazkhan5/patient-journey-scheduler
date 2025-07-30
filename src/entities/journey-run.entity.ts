@@ -28,7 +28,7 @@ export class JourneyRun implements IJourneyRun {
   @Column('text')
   private _patientContext: string;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   resumeAt: Date | null;
 
   @CreateDateColumn()

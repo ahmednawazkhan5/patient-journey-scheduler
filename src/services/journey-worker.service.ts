@@ -51,7 +51,7 @@ export class JourneyWorkerService {
    * Process all journeys that are ready to resume
    */
   async processReadyJourneys() {
-    const batchSize = 10;
+    const batchSize = 1000; // can be configurable based on load
 
     try {
       // Step 1: Lock and claim journeys atomically
