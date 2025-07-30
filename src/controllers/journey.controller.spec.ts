@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Response } from 'express';
 import { JourneyController } from './journey.controller';
 import { JourneyService } from '../services/journey.service';
 import { JourneyExecutionService } from '../services/journey-execution.service';
@@ -9,6 +10,13 @@ describe('JourneyController', () => {
   let controller: JourneyController;
   let journeyService: Partial<JourneyService>;
   let journeyExecutionService: Partial<JourneyExecutionService>;
+
+  // Helper to create mock Response object
+  const createMockResponse = (): Partial<Response> => ({
+    header: jest.fn(),
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  });
 
   beforeEach(async () => {
     const mockJourneyService = MockHelpers.createMockJourneyService();
@@ -82,6 +90,7 @@ describe('JourneyController', () => {
       const journeyId = 'journey-123';
       const expectedRunId = 'run-789';
       const mockPatientContext = TestFixtures.PATIENT_CONTEXTS.SENIOR_PATIENT;
+      const mockResponse = createMockResponse();
       (journeyExecutionService.triggerJourney as jest.Mock).mockResolvedValue(
         expectedRunId,
       );
@@ -90,6 +99,7 @@ describe('JourneyController', () => {
       const result = await controller.triggerJourney(
         journeyId,
         mockPatientContext,
+        mockResponse as Response,
       );
 
       // Assert
@@ -98,6 +108,10 @@ describe('JourneyController', () => {
         mockPatientContext,
       );
       expect(journeyExecutionService.triggerJourney).toHaveBeenCalledTimes(1);
+      expect(mockResponse.header).toHaveBeenCalledWith(
+        'Location',
+        `/journeys/runs/${expectedRunId}`,
+      );
       expect(result).toEqual({
         runId: expectedRunId,
       });
@@ -108,13 +122,18 @@ describe('JourneyController', () => {
       const journeyId = 'non-existent-journey';
       const error = new Error('Journey not found');
       const mockPatientContext = TestFixtures.PATIENT_CONTEXTS.YOUNG_PATIENT;
+      const mockResponse = createMockResponse();
       (journeyExecutionService.triggerJourney as jest.Mock).mockRejectedValue(
         error,
       );
 
       // Act & Assert
       await expect(
-        controller.triggerJourney(journeyId, mockPatientContext),
+        controller.triggerJourney(
+          journeyId,
+          mockPatientContext,
+          mockResponse as Response,
+        ),
       ).rejects.toThrow('Journey not found');
       expect(journeyExecutionService.triggerJourney).toHaveBeenCalledWith(
         journeyId,

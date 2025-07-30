@@ -6,6 +6,7 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -14,6 +15,7 @@ import {
   ApiParam,
   ApiBody,
 } from '@nestjs/swagger';
+import { Response } from 'express';
 import { JourneyService } from '../services/journey.service';
 import { JourneyExecutionService } from '../services/journey-execution.service';
 import { NodeType } from '../enums/node-type.enum';
@@ -232,11 +234,15 @@ export class JourneyController {
   async triggerJourney(
     @Param('journeyId') journeyId: string,
     @Body() patientContext: PatientContext,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<{ runId: string }> {
     const runId = await this.journeyExecutionService.triggerJourney(
       journeyId,
       patientContext,
     );
+
+    // Set the Location header pointing to the monitoring endpoint
+    res.header('Location', `/journeys/runs/${runId}`);
 
     return { runId };
   }
