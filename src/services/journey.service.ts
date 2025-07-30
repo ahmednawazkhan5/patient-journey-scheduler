@@ -52,12 +52,13 @@ export class JourneyService {
     journeyRun.status = JourneyRunStatus.IN_PROGRESS;
     journeyRun.currentNodeId = journey.start_node_id;
     journeyRun.patientContext = patientContext;
+    journeyRun.resumeAt = null;
 
     await this.databaseService.save(JourneyRun, journeyRun);
     this.logger.log(`Started journey run with ID: ${journeyRun.runId}`);
 
-    // Start processing the journey asynchronously
-    this.processJourney(journeyRun.runId).catch((error) => {
+    // Start processing the journey immediately (non-blocking)
+    this.processJourneyImmediate(journeyRun.runId).catch((error) => {
       this.logger.error(
         `Error processing journey run ${journeyRun.runId}:`,
         error,
@@ -67,19 +68,53 @@ export class JourneyService {
     return journeyRun.runId;
   }
 
-  async getJourneyRun(runId: string): Promise<JourneyRun> {
-    const journeyRun = await this.databaseService.findOne(JourneyRun, {
-      where: { runId },
-    });
-
-    if (!journeyRun) {
-      throw new NotFoundException(`Journey run with ID ${runId} not found`);
+  /**
+   * Continue processing a journey from a specific node (called by worker)
+   */
+  async continueProcessingFromNode(
+    runId: string,
+    currentNodeId: string | null,
+  ): Promise<void> {
+    if (!currentNodeId) {
+      // Journey completed
+      await this.updateJourneyRunStatus(
+        runId,
+        JourneyRunStatus.COMPLETED,
+        null,
+      );
+      this.logger.log(`Journey run ${runId} completed`);
+      return;
     }
 
-    return journeyRun;
+    await this.processJourneyFromNode(runId, currentNodeId);
   }
 
-  private async processJourney(runId: string): Promise<void> {
+  /**
+   * Process journey immediately (until delay or completion)
+   */
+  private async processJourneyImmediate(runId: string): Promise<void> {
+    const journeyRun = await this.getJourneyRun(runId);
+    await this.processJourneyFromNode(runId, journeyRun.currentNodeId);
+  }
+
+  /**
+   * Process journey starting from a specific node
+   */
+  private async processJourneyFromNode(
+    runId: string,
+    startNodeId: string | null,
+  ): Promise<void> {
+    if (!startNodeId) {
+      // Journey completed
+      await this.updateJourneyRunStatus(
+        runId,
+        JourneyRunStatus.COMPLETED,
+        null,
+      );
+      this.logger.log(`Journey run ${runId} completed`);
+      return;
+    }
+
     const journeyRun = await this.getJourneyRun(runId);
     const journey = await this.databaseService.findOne(Journey, {
       where: { id: journeyRun.journeyId },
@@ -90,7 +125,7 @@ export class JourneyService {
       return;
     }
 
-    let currentNodeId = journeyRun.currentNodeId;
+    let currentNodeId = startNodeId;
 
     while (currentNodeId) {
       const currentNode = journey.nodes.find(
@@ -109,17 +144,43 @@ export class JourneyService {
         return;
       }
 
-      const nextNodeId = await this.processNode(
+      const nextNodeId = this.processNode(
         currentNode,
         journeyRun.patientContext,
       );
 
-      // Update the current node
+      // Check if we hit a delay node
+      if (currentNode.type === 'DELAY' && nextNodeId) {
+        // For delay nodes, we schedule the resume and exit
+        const resumeTime = new Date(
+          Date.now() + currentNode.duration_seconds * 1000,
+        );
+
+        await this.databaseService.save(JourneyRun, {
+          runId,
+          status: JourneyRunStatus.WAITING_DELAY,
+          currentNodeId: currentNode.id, // Keep pointing to delay node
+          resumeAt: resumeTime,
+        });
+
+        this.logger.log(
+          `DELAY node ${currentNode.id}: Scheduled resume at ${resumeTime.toISOString()}`,
+        );
+        return; // Exit processing - worker will pick up later
+      }
+
+      // Update the current node for non-delay nodes
       await this.updateJourneyRunStatus(
         runId,
         JourneyRunStatus.IN_PROGRESS,
         nextNodeId,
       );
+
+      if (nextNodeId === null) {
+        // Journey completed
+        break;
+      }
+
       currentNodeId = nextNodeId;
     }
 
@@ -128,10 +189,22 @@ export class JourneyService {
     this.logger.log(`Journey run ${runId} completed`);
   }
 
-  private async processNode(
+  async getJourneyRun(runId: string): Promise<JourneyRun> {
+    const journeyRun = await this.databaseService.findOne(JourneyRun, {
+      where: { runId },
+    });
+
+    if (!journeyRun) {
+      throw new NotFoundException(`Journey run with ID ${runId} not found`);
+    }
+
+    return journeyRun;
+  }
+
+  private processNode(
     node: JourneyNode,
     patientContext: PatientContext,
-  ): Promise<string | null> {
+  ): string | null {
     switch (node.type) {
       case 'MESSAGE':
         return this.processMessageNode(node, patientContext);
@@ -156,17 +229,13 @@ export class JourneyService {
     return node.next_node_id;
   }
 
-  private async processDelayNode(node: DelayNode): Promise<string | null> {
+  private processDelayNode(node: DelayNode): string | null {
+    // Don't actually delay here - just return the next node
+    // The delay scheduling is handled in processJourneyFromNode
     this.logger.log(
-      `DELAY node ${node.id}: Waiting for ${node.duration_seconds} seconds`,
+      `DELAY node ${node.id}: Scheduling delay for ${node.duration_seconds} seconds`,
     );
 
-    // Create a delay
-    await new Promise((resolve) =>
-      setTimeout(resolve, node.duration_seconds * 1000),
-    );
-
-    this.logger.log(`DELAY node ${node.id}: Delay completed`);
     return node.next_node_id;
   }
 

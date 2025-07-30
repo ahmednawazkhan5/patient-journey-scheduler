@@ -57,6 +57,7 @@ export interface JourneyRun {
   status: JourneyRunStatus;
   currentNodeId: string | null;
   patientContext: PatientContext;
+  resumeAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -97,4 +97,17 @@ export class DatabaseService {
   async query(sql: string, parameters?: any[]): Promise<any> {
     return this.dataSource.query(sql, parameters);
   }
+
+  /**
+   * Create a query builder
+   */
+  createQueryBuilder<Entity extends ObjectLiteral>(
+    entity?: EntityTarget<Entity>,
+    alias?: string,
+  ) {
+    if (entity && alias) {
+      return this.dataSource.createQueryBuilder(entity, alias);
+    }
+    return this.dataSource.createQueryBuilder();
+  }
 }
