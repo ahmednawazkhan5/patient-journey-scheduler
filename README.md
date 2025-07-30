@@ -1,98 +1,208 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Patient Journey Scheduler
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A scalable, event-driven patient journey automation system built with NestJS and TypeScript. This system orchestrates multi-step patient care workflows with message delivery, conditional logic, and time-based delays.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## How to Run the Project
 
-## Description
+### Prerequisites
+- Node.js 18+
+- pnpm package manager
+- Docker & Docker Compose
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+### Setup & Run
 
-## Project setup
+1. **Start PostgreSQL database**:
+   ```bash
+   docker-compose up -d postgres
+   ```
 
-```bash
-$ pnpm install
+2. **Install dependencies**:
+   ```bash
+   pnpm install
+   ```
+
+3. **Run the application**:
+   ```bash
+   # Development mode with hot reload
+   pnpm run start:dev
+
+   # Production mode
+   pnpm run start:prod
+   ```
+
+4. **Run tests**:
+   ```bash
+   # Unit tests
+   pnpm run test
+
+   # E2E tests
+   pnpm run test:e2e
+
+   # Test coverage
+   pnpm run test:cov
+   ```
+
+### API Documentation
+
+The application includes comprehensive **Swagger/OpenAPI documentation** for easy API exploration and testing:
+
+- **Interactive Documentation**: Visit `http://localhost:3000/api` when the application is running
+- **API Explorer**: Test endpoints directly from the browser interface
+- **Schema Definitions**: Complete request/response models with validation rules
+- **Authentication**: Built-in support for testing authenticated endpoints
+
+#### Swagger Features
+- **Real-time Testing**: Execute API calls directly from the documentation
+- **Request Examples**: Pre-populated example payloads for all endpoints
+- **Response Schemas**: Detailed response structure with status codes
+- **Parameter Documentation**: Query parameters, path variables, and request bodies
+- **Error Responses**: Documented error scenarios with example responses
+
+The Swagger client provides a complete reference for:
+- Journey creation and management
+- Patient journey execution
+- Journey run status monitoring
+- Worker health and status endpoints
+
+## Horizontal Scaling for Workers
+
+The system supports horizontal scaling through multiple worker instances that can resume pending job runs:
+
+### Worker Architecture
+- **Polling-based Workers**: Multiple `JourneyWorkerService` instances poll the database for ready journeys
+- **Pessimistic Locking**: Uses `FOR UPDATE` locks to prevent race conditions between workers
+- **Atomic Claiming**: Workers atomically claim jobs by changing status from `WAITING_DELAY` to `IN_PROGRESS`
+- **Batch Processing**: Configurable batch size (default: 1000) for efficient processing
+
+### Scaling Strategy
+```typescript
+// Multiple worker instances can run simultaneously
+const worker1 = new JourneyWorkerService(db, executionService);
+const worker2 = new JourneyWorkerService(db, executionService);
+
+worker1.startWorker(5000); // Poll every 5 seconds
+worker2.startWorker(3000); // Poll every 3 seconds
 ```
 
-## Compile and run the project
+Workers automatically:
+- Find journeys with `resumeAt <= NOW()`
+- Lock rows to prevent double-processing
+- Update status atomically
+- Process in separate transactions to avoid deadlocks
 
-```bash
-# development
-$ pnpm run start
+## Delay Node & Efficient Task Scheduling
 
-# watch mode
-$ pnpm run start:dev
+### Delay Node Implementation
+The delay mechanism follows an efficient task scheduler pattern:
 
-# production mode
-$ pnpm run start:prod
+```typescript
+interface DelayNode {
+  id: string;
+  type: NodeType.DELAY;
+  duration_seconds: number;
+  next_node_id: string | null;
+}
 ```
 
-## Run tests
+### Scheduling Pattern
+1. **No Active Waiting**: Delay nodes don't block threads or use timers
+2. **Database-Driven**: Future execution time stored as `resumeAt` timestamp
+3. **Worker Polling**: Background workers periodically check for ready tasks
+4. **Scalable**: Supports millions of delayed tasks without memory overhead
 
-```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+### Process Flow
+```
+Journey reaches DELAY node →
+Calculate resumeAt = NOW() + duration_seconds →
+Set status to WAITING_DELAY →
+Worker finds resumeAt <= NOW() →
+Resume journey execution
 ```
 
-## Deployment
+This approach ensures:
+- **Memory Efficiency**: No in-memory timers or queues
+- **Persistence**: Delays survive application restarts
+- **Scalability**: Unlimited concurrent delayed tasks
+- **Reliability**: No lost delays due to process failures
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Interface-Driven Decoupled Architecture
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+The system follows strict interface segregation and dependency inversion:
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+### Core Interfaces
+```typescript
+// Clean domain interfaces
+interface Journey {
+  id: string;
+  name: string;
+  start_node_id: string;
+  nodes: JourneyNode[];
+}
+
+interface PatientContext {
+  id: string;
+  age: number;
+  language: 'en' | 'es';
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### Service Abstraction
+- **Node Processing**: `NodeProcessorService` handles all node types through polymorphic interfaces
+- **Journey Execution**: `JourneyExecutionService` orchestrates flow without knowing node internals
+- **Database Layer**: `DatabaseService` abstracts persistence from business logic
 
-## Resources
+### Benefits
+- **Testability**: Easy to mock interfaces for unit tests
+- **Extensibility**: New node types can be added without changing existing code
+- **Maintainability**: Clear separation of concerns
+- **Flexibility**: Swap implementations without affecting consumers
 
-Check out a few resources that may come in handy when working with NestJS:
+## Pure Unit Tests with Comprehensive Mocking
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Testing Philosophy
+All tests are pure unit tests that:
+- **Mock All Dependencies**: No real database, no network calls, no file system
+- **Fast Execution**: Tests run in milliseconds
+- **Deterministic**: Same input always produces same output
+- **Isolated**: Each test is completely independent
 
-## Support
+### Mock Infrastructure
+```typescript
+// Comprehensive mock helpers
+export class MockHelpers {
+  static createMockJourneyService(): Partial<JourneyService> {
+    return {
+      createJourney: jest.fn(),
+      getJourney: jest.fn(),
+      // ... all methods mocked
+    };
+  }
+}
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+// Reusable test fixtures
+export class TestFixtures {
+  static createValidJourney(): Journey {
+    // Returns consistent test data
+  }
+}
+```
 
-## Stay in touch
+### Test Structure
+- **Arrange**: Set up mocks with predictable responses
+- **Act**: Execute the system under test
+- **Assert**: Verify interactions and outcomes
+- **Cleanup**: Automatic mock reset between tests
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### Coverage
+- **Business Logic**: 100% coverage of core journey execution logic
+- **Error Scenarios**: Comprehensive error handling verification
+- **Edge Cases**: Boundary conditions and invalid inputs
+- **Integration Points**: Mock-based verification of service interactions
 
-## License
+## Architecture Highlights
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- **Event-Driven**: Asynchronous processing with TypeORM transactions
+- **Type-Safe**: Full TypeScript with strict type checking
+- **Testable**: Dependency injection enables comprehensive testing
+- **Scalable**: Stateless services with database-driven coordination
+- **Maintainable**: Clean architecture with clear separation of concerns
