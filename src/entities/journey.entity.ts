@@ -12,7 +12,7 @@ import {
 
 @Entity('journeys')
 export class Journey implements IJourney {
-  @PrimaryColumn('varchar')
+  @PrimaryColumn('uuid')
   id: string;
 
   @Column('varchar')

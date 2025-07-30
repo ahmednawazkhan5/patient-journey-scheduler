@@ -18,7 +18,7 @@ async function bootstrap() {
 
   // Start the journey worker
   const journeyWorker = app.get(JourneyWorkerService);
-  journeyWorker.startWorker(5000); // Poll every 5 seconds
+  journeyWorker.startWorker(15000); // Poll every 15 seconds
 
   // Graceful shutdown
   process.on('SIGTERM', () => {

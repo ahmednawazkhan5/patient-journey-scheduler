@@ -6,11 +6,7 @@ import { JourneyRun } from '../entities/journey-run.entity';
 import { JourneyRunStatus } from '../enums/journey-run-status.enum';
 import {
   Journey as IJourney,
-  PatientContext,
   JourneyNode,
-  ActionNode,
-  DelayNode,
-  ConditionalNode,
 } from '../interfaces/journey.interface';
 
 @Injectable()
@@ -32,11 +28,7 @@ export class JourneyService {
     return journey.id;
   }
 
-  async triggerJourney(
-    journeyId: string,
-    patientContext: PatientContext,
-  ): Promise<string> {
-    // Check if journey exists
+  async getJourney(journeyId: string): Promise<Journey> {
     const journey = await this.databaseService.findOne(Journey, {
       where: { id: journeyId },
     });
@@ -45,148 +37,7 @@ export class JourneyService {
       throw new NotFoundException(`Journey with ID ${journeyId} not found`);
     }
 
-    // Create a new journey run
-    const journeyRun = new JourneyRun();
-    journeyRun.runId = uuidv4();
-    journeyRun.journeyId = journeyId;
-    journeyRun.status = JourneyRunStatus.IN_PROGRESS;
-    journeyRun.currentNodeId = journey.start_node_id;
-    journeyRun.patientContext = patientContext;
-    journeyRun.resumeAt = null;
-
-    await this.databaseService.save(JourneyRun, journeyRun);
-    this.logger.log(`Started journey run with ID: ${journeyRun.runId}`);
-
-    // Start processing the journey immediately (non-blocking)
-    this.processJourneyImmediate(journeyRun.runId).catch((error) => {
-      this.logger.error(
-        `Error processing journey run ${journeyRun.runId}:`,
-        error,
-      );
-    });
-
-    return journeyRun.runId;
-  }
-
-  /**
-   * Continue processing a journey from a specific node (called by worker)
-   */
-  async continueProcessingFromNode(
-    runId: string,
-    currentNodeId: string | null,
-  ): Promise<void> {
-    if (!currentNodeId) {
-      // Journey completed
-      await this.updateJourneyRunStatus(
-        runId,
-        JourneyRunStatus.COMPLETED,
-        null,
-      );
-      this.logger.log(`Journey run ${runId} completed`);
-      return;
-    }
-
-    await this.processJourneyFromNode(runId, currentNodeId);
-  }
-
-  /**
-   * Process journey immediately (until delay or completion)
-   */
-  private async processJourneyImmediate(runId: string): Promise<void> {
-    const journeyRun = await this.getJourneyRun(runId);
-    await this.processJourneyFromNode(runId, journeyRun.currentNodeId);
-  }
-
-  /**
-   * Process journey starting from a specific node
-   */
-  private async processJourneyFromNode(
-    runId: string,
-    startNodeId: string | null,
-  ): Promise<void> {
-    if (!startNodeId) {
-      // Journey completed
-      await this.updateJourneyRunStatus(
-        runId,
-        JourneyRunStatus.COMPLETED,
-        null,
-      );
-      this.logger.log(`Journey run ${runId} completed`);
-      return;
-    }
-
-    const journeyRun = await this.getJourneyRun(runId);
-    const journey = await this.databaseService.findOne(Journey, {
-      where: { id: journeyRun.journeyId },
-    });
-
-    if (!journey) {
-      await this.updateJourneyRunStatus(runId, JourneyRunStatus.FAILED, null);
-      return;
-    }
-
-    let currentNodeId = startNodeId;
-
-    while (currentNodeId) {
-      const currentNode = journey.nodes.find(
-        (node) => node.id === currentNodeId,
-      );
-
-      if (!currentNode) {
-        this.logger.error(
-          `Node ${currentNodeId} not found in journey ${journey.id}`,
-        );
-        await this.updateJourneyRunStatus(
-          runId,
-          JourneyRunStatus.FAILED,
-          currentNodeId,
-        );
-        return;
-      }
-
-      const nextNodeId = this.processNode(
-        currentNode,
-        journeyRun.patientContext,
-      );
-
-      // Check if we hit a delay node
-      if (currentNode.type === 'DELAY' && nextNodeId) {
-        // For delay nodes, we schedule the resume and exit
-        const resumeTime = new Date(
-          Date.now() + currentNode.duration_seconds * 1000,
-        );
-
-        await this.databaseService.save(JourneyRun, {
-          runId,
-          status: JourneyRunStatus.WAITING_DELAY,
-          currentNodeId: currentNode.id, // Keep pointing to delay node
-          resumeAt: resumeTime,
-        });
-
-        this.logger.log(
-          `DELAY node ${currentNode.id}: Scheduled resume at ${resumeTime.toISOString()}`,
-        );
-        return; // Exit processing - worker will pick up later
-      }
-
-      // Update the current node for non-delay nodes
-      await this.updateJourneyRunStatus(
-        runId,
-        JourneyRunStatus.IN_PROGRESS,
-        nextNodeId,
-      );
-
-      if (nextNodeId === null) {
-        // Journey completed
-        break;
-      }
-
-      currentNodeId = nextNodeId;
-    }
-
-    // Journey completed
-    await this.updateJourneyRunStatus(runId, JourneyRunStatus.COMPLETED, null);
-    this.logger.log(`Journey run ${runId} completed`);
+    return journey;
   }
 
   async getJourneyRun(runId: string): Promise<JourneyRun> {
@@ -201,103 +52,30 @@ export class JourneyService {
     return journeyRun;
   }
 
-  private processNode(
-    node: JourneyNode,
-    patientContext: PatientContext,
-  ): string | null {
-    switch (node.type) {
-      case 'MESSAGE':
-        return this.processMessageNode(node, patientContext);
-      case 'DELAY':
-        return this.processDelayNode(node);
-      case 'CONDITIONAL':
-        return this.processConditionalNode(node, patientContext);
-      default:
-        this.logger.error(`Unknown node type`);
-        return null;
-    }
+  /**
+   * Find a node in the journey by ID
+   */
+  findNodeInJourney(journey: Journey, nodeId: string): JourneyNode | null {
+    return journey.nodes.find((node) => node.id === nodeId) || null;
   }
 
-  private processMessageNode(
-    node: ActionNode,
-    patientContext: PatientContext,
-  ): string | null {
-    this.logger.log(
-      `MESSAGE node ${node.id}: Sent message to patient ${patientContext.id}`,
-    );
-
-    return node.next_node_id;
+  /**
+   * Complete a journey with proper logging and status update
+   */
+  async completeJourney(runId: string): Promise<void> {
+    await this.updateJourneyRunStatus(runId, JourneyRunStatus.COMPLETED, null);
+    this.logger.log(`Journey run ${runId} completed`);
   }
 
-  private processDelayNode(node: DelayNode): string | null {
-    // Don't actually delay here - just return the next node
-    // The delay scheduling is handled in processJourneyFromNode
-    this.logger.log(
-      `DELAY node ${node.id}: Scheduling delay for ${node.duration_seconds} seconds`,
-    );
-
-    return node.next_node_id;
+  /**
+   * Fail a journey with proper logging and status update
+   */
+  async failJourney(runId: string, reason: string): Promise<void> {
+    await this.updateJourneyRunStatus(runId, JourneyRunStatus.FAILED, null);
+    this.logger.error(`Journey run ${runId} failed: ${reason}`);
   }
 
-  private processConditionalNode(
-    node: ConditionalNode,
-    patientContext: PatientContext,
-  ): string | null {
-    const condition = node.condition;
-    const field = condition.field;
-    const operator = condition.operator;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const value = condition.value;
-
-    // Get the field value from patient context
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const fieldValue = this.getFieldValue(patientContext, field);
-
-    // Evaluate the condition
-    const conditionResult = this.evaluateCondition(fieldValue, operator, value);
-
-    this.logger.log(
-      `CONDITIONAL node ${node.id}: ${field} ${operator} ${value} = ${conditionResult}`,
-    );
-
-    return conditionResult
-      ? node.on_true_next_node_id
-      : node.on_false_next_node_id;
-  }
-
-  private getFieldValue(patientContext: PatientContext, field: string): any {
-    // Support dot notation like 'patient.age'
-    const fieldPath = field.startsWith('patient.') ? field.substring(8) : field;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    return (patientContext as any)[fieldPath];
-  }
-
-  private evaluateCondition(
-    fieldValue: any,
-    operator: string,
-    value: any,
-  ): boolean {
-    switch (operator) {
-      case '>':
-        return fieldValue > value;
-      case '<':
-        return fieldValue < value;
-      case '>=':
-        return fieldValue >= value;
-      case '<=':
-        return fieldValue <= value;
-      case '=':
-      case '==':
-        return fieldValue === value;
-      case '!=':
-        return fieldValue !== value;
-      default:
-        this.logger.error(`Unknown operator: ${operator}`);
-        return false;
-    }
-  }
-
-  private async updateJourneyRunStatus(
+  async updateJourneyRunStatus(
     runId: string,
     status: JourneyRunStatus,
     currentNodeId: string | null,

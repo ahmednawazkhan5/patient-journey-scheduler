@@ -1,9 +1,10 @@
 import { JourneyRunStatus } from '../enums/journey-run-status.enum';
+import { NodeType } from '../enums/node-type.enum';
 
 // An action to be performed, like sending an SMS or making a call
 export interface ActionNode {
   id: string;
-  type: 'MESSAGE';
+  type: NodeType.MESSAGE;
   message: string;
   next_node_id: string | null;
 }
@@ -11,7 +12,7 @@ export interface ActionNode {
 // A simple time delay in the journey
 export interface DelayNode {
   id: string;
-  type: 'DELAY';
+  type: NodeType.DELAY;
   duration_seconds: number;
   next_node_id: string | null;
 }
@@ -19,7 +20,7 @@ export interface DelayNode {
 // A conditional branch based on patient data
 export interface ConditionalNode {
   id: string;
-  type: 'CONDITIONAL';
+  type: NodeType.CONDITIONAL;
   condition: {
     // e.g., 'patient.age', 'patient.condition'
     field: string;

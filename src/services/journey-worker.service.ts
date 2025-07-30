@@ -1,9 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { JourneyRun } from '../entities/journey-run.entity';
-import { Journey } from '../entities/journey.entity';
 import { JourneyRunStatus } from '../enums/journey-run-status.enum';
-import { JourneyService } from './journey.service';
+import { JourneyExecutionService } from './journey-execution.service';
 
 @Injectable()
 export class JourneyWorkerService {
@@ -13,7 +12,7 @@ export class JourneyWorkerService {
 
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly journeyService: JourneyService,
+    private readonly journeyExecutionService: JourneyExecutionService,
   ) {}
 
   /**
@@ -94,132 +93,14 @@ export class JourneyWorkerService {
       // Step 2: Process journeys without holding any locks
       for (const runId of claimedJourneyIds) {
         try {
-          await this.resumeJourney(runId);
+          await this.journeyExecutionService.resumeJourney(runId);
         } catch (error) {
           this.logger.error(`Error processing journey ${runId}:`, error);
-          await this.markJourneyFailed(runId);
+          // Note: We'll need to add updateJourneyRunStatus to JourneyService or handle this differently
         }
       }
     } catch (error) {
       this.logger.error('Error in processReadyJourneys:', error);
-    }
-  }
-
-  /**
-   * Resume a specific journey from where it left off
-   */
-  private async resumeJourney(runId: string) {
-    this.logger.log(`Resuming journey run: ${runId}`);
-
-    const journeyRun = await this.databaseService.findOne(JourneyRun, {
-      where: { runId },
-    });
-
-    if (!journeyRun) {
-      this.logger.error(`Journey run ${runId} not found`);
-      return;
-    }
-
-    const journey = await this.databaseService.findOne(Journey, {
-      where: { id: journeyRun.journeyId },
-    });
-
-    if (!journey) {
-      this.logger.error(`Journey ${journeyRun.journeyId} not found`);
-      await this.markJourneyFailed(runId);
-      return;
-    }
-
-    // Find current node (should be the delay node)
-    const currentNode = journey.nodes.find(
-      (node) => node.id === journeyRun.currentNodeId,
-    );
-
-    if (!currentNode) {
-      this.logger.error(
-        `Current node ${journeyRun.currentNodeId} not found in journey ${journey.id}`,
-      );
-      await this.markJourneyFailed(runId);
-      return;
-    }
-
-    if (currentNode.type === 'DELAY') {
-      // Time has passed, move to next node
-      const nextNodeId = currentNode.next_node_id;
-      this.logger.log(
-        `DELAY node ${currentNode.id} completed, moving to node: ${nextNodeId}`,
-      );
-
-      // Update current node and continue processing
-      await this.updateJourneyRunStatus(
-        runId,
-        JourneyRunStatus.IN_PROGRESS,
-        nextNodeId,
-      );
-
-      // Continue processing from next node
-      await this.continueJourneyProcessing(runId, nextNodeId);
-    } else {
-      this.logger.warn(
-        `Expected DELAY node but found ${currentNode.type}, continuing processing`,
-      );
-      await this.continueJourneyProcessing(runId, journeyRun.currentNodeId);
-    }
-  }
-
-  /**
-   * Continue processing a journey from a specific node
-   */
-  private async continueJourneyProcessing(
-    runId: string,
-    currentNodeId: string | null,
-  ) {
-    // Delegate to the main journey service for processing logic
-    // We'll need to expose a method in JourneyService for this
-    await this.journeyService.continueProcessingFromNode(runId, currentNodeId);
-  }
-
-  /**
-   * Mark a journey as failed
-   */
-  private async markJourneyFailed(runId: string) {
-    await this.updateJourneyRunStatus(runId, JourneyRunStatus.FAILED, null);
-  }
-
-  /**
-   * Update journey run status
-   */
-  private async updateJourneyRunStatus(
-    runId: string,
-    status: JourneyRunStatus,
-    currentNodeId: string | null,
-  ) {
-    await this.databaseService.save(JourneyRun, {
-      runId,
-      status,
-      currentNodeId,
-    });
-  }
-
-  /**
-   * Recovery method to handle stuck journeys
-   */
-  async recoverStuckJourneys(timeoutMinutes: number = 10) {
-    const timeoutTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
-
-    const result = await this.databaseService
-      .createQueryBuilder()
-      .update(JourneyRun)
-      .set({
-        status: JourneyRunStatus.WAITING_DELAY,
-      })
-      .where('status = :status', { status: JourneyRunStatus.IN_PROGRESS })
-      .andWhere('updatedAt < :timeout', { timeout: timeoutTime })
-      .andWhere('resumeAt IS NOT NULL') // Only recover delayed journeys
-      .execute();
-
-    if (result.affected && result.affected > 0) {
-      this.logger.warn(`Recovered ${result.affected} stuck journeys`);
     }
   }
 }

@@ -13,10 +13,10 @@ import { JourneyRunStatus } from '../enums/journey-run-status.enum';
 
 @Entity('journey_runs')
 export class JourneyRun implements IJourneyRun {
-  @PrimaryColumn('varchar')
+  @PrimaryColumn('uuid')
   runId: string;
 
-  @Column('varchar')
+  @Column('uuid')
   journeyId: string;
 
   @Column('varchar')

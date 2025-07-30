@@ -15,6 +15,8 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { JourneyService } from '../services/journey.service';
+import { JourneyExecutionService } from '../services/journey-execution.service';
+import { NodeType } from '../enums/node-type.enum';
 import {
   Journey,
   PatientContext,
@@ -24,7 +26,10 @@ import {
 @ApiTags('journeys')
 @Controller('journeys')
 export class JourneyController {
-  constructor(private readonly journeyService: JourneyService) {}
+  constructor(
+    private readonly journeyService: JourneyService,
+    private readonly journeyExecutionService: JourneyExecutionService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -53,28 +58,28 @@ export class JourneyController {
                 type: 'object',
                 properties: {
                   id: { type: 'string', example: 'welcome_message' },
-                  type: { type: 'string', enum: ['MESSAGE'] },
+                  type: { type: 'string', enum: [NodeType.MESSAGE] },
                   message: {
                     type: 'string',
                     example: 'Welcome to your recovery journey!',
                   },
+                  next_node_id: { type: 'string', example: 'wait_180' },
+                },
+              },
+              {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', example: 'wait_180' },
+                  type: { type: 'string', enum: [NodeType.DELAY] },
+                  duration_seconds: { type: 'number', example: 180 },
                   next_node_id: { type: 'string', example: 'check_age' },
                 },
               },
               {
                 type: 'object',
                 properties: {
-                  id: { type: 'string', example: 'wait_24h' },
-                  type: { type: 'string', enum: ['DELAY'] },
-                  duration_seconds: { type: 'number', example: 86400 },
-                  next_node_id: { type: 'string', example: 'followup_message' },
-                },
-              },
-              {
-                type: 'object',
-                properties: {
                   id: { type: 'string', example: 'check_age' },
-                  type: { type: 'string', enum: ['CONDITIONAL'] },
+                  type: { type: 'string', enum: [NodeType.CONDITIONAL] },
                   condition: {
                     type: 'object',
                     properties: {
@@ -85,11 +90,11 @@ export class JourneyController {
                   },
                   on_true_next_node_id: {
                     type: 'string',
-                    example: 'senior_message',
+                    example: 'over_65',
                   },
                   on_false_next_node_id: {
                     type: 'string',
-                    example: 'regular_message',
+                    example: 'less_than_65',
                   },
                 },
               },
@@ -98,6 +103,45 @@ export class JourneyController {
         },
       },
       required: ['name', 'start_node_id', 'nodes'],
+      example: {
+        name: 'Hip Replacement Recovery Journey',
+        start_node_id: 'welcome_message',
+        nodes: [
+          {
+            id: 'welcome_message',
+            type: 'MESSAGE',
+            message: 'Welcome to your recovery journey!',
+            next_node_id: 'wait_180',
+          },
+          {
+            id: 'wait_180',
+            type: 'DELAY',
+            duration_seconds: 180,
+            next_node_id: 'check_age',
+          },
+          {
+            id: 'check_age',
+            type: 'CONDITIONAL',
+            condition: {
+              field: 'patient.age',
+              operator: '>',
+              value: 65,
+            },
+            on_true_next_node_id: 'over_65',
+            on_false_next_node_id: 'less_than_65',
+          },
+          {
+            id: 'over_65',
+            type: 'MESSAGE',
+            message: 'you are over 65',
+          },
+          {
+            id: 'less_than_65',
+            type: 'MESSAGE',
+            message: 'you are less than 65',
+          },
+        ],
+      },
     },
   })
   @ApiResponse({
@@ -189,7 +233,7 @@ export class JourneyController {
     @Param('journeyId') journeyId: string,
     @Body() patientContext: PatientContext,
   ): Promise<{ runId: string }> {
-    const runId = await this.journeyService.triggerJourney(
+    const runId = await this.journeyExecutionService.triggerJourney(
       journeyId,
       patientContext,
     );
