@@ -97,10 +97,19 @@ export class NodeProcessorService {
    * Get field value from patient context with dot notation support
    */
   private getFieldValue(patientContext: PatientContext, field: string): any {
-    // Support dot notation like 'patient.age'
-    const fieldPath = field.startsWith('patient.') ? field.substring(8) : field;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    return (patientContext as any)[fieldPath];
+    // Support dot notation like 'patient.age' or 'patient.nonexistent.field'
+    const fieldParts = field.split('.');
+    let value: any = patientContext;
+
+    for (const part of fieldParts) {
+      if (value == null || typeof value !== 'object') {
+        return undefined;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+      value = value[part];
+    }
+
+    return value;
   }
 
   /**

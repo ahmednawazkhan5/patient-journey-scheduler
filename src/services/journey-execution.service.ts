@@ -201,7 +201,16 @@ export class JourneyExecutionService {
     runId: string,
   ): Promise<JourneyContext | null> {
     const journeyRun = await this.journeyService.getJourneyRun(runId);
+    if (!journeyRun) {
+      this.logger.error(`Journey run not found: ${runId}`);
+      return null;
+    }
+
     const journey = await this.journeyService.getJourney(journeyRun.journeyId);
+    if (!journey) {
+      this.logger.error(`Journey not found: ${journeyRun.journeyId}`);
+      return null;
+    }
 
     return { journeyRun, journey };
   }
